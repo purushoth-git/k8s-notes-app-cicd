@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Notes App</title>
+<style>
+  body { font-family: sans-serif; max-width: 500px; margin: 40px auto; padding: 0 20px; }
+  h1 { font-size: 22px; }
+  input { width: 70%; padding: 8px; }
+  button { padding: 8px 14px; }
+  ul { padding-left: 20px; }
+  li { margin: 6px 0; }
+</style>
+</head>
+<body>
+  <h1>Notes</h1>
+  <input id="noteInput" type="text" placeholder="Write a note...">
+  <button onclick="addNote()">Add</button>
+  <ul id="noteList"></ul>
+
+  <script>
+    async function loadNotes() {
+      const res = await fetch('/api/notes');
+      const notes = await res.json();
+      const list = document.getElementById('noteList');
+      list.innerHTML = '';
+      notes.forEach(n => {
+        const li = document.createElement('li');
+        li.textContent = n.content;
+        list.appendChild(li);
+      });
+    }
+
+    async function addNote() {
+      const input = document.getElementById('noteInput');
+      const content = input.value.trim();
+      if (!content) return;
+      await fetch('/api/notes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content })
+      });
+      input.value = '';
+      loadNotes();
+    }
+
+    loadNotes();
+  </script>
+</body>
+</html>
