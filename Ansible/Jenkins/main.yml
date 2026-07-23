@@ -1,0 +1,113 @@
+#SPDX-License-Identifier: MIT-0
+---
+# tasks file for jenkins
+
+  - name: Update apt cache
+    apt:
+      update_cache: yes
+
+  - name: Install required packages
+    apt:
+      name:
+        - curl
+        - wget
+        - gnupg
+        - software-properties-common
+        - git
+        - unzip
+        - apt-transport-https
+      state: present
+
+  #########################################################
+  # JAVA 21
+  #########################################################
+  - name: Install OpenJDK 21
+    apt:
+      name: openjdk-21-jdk
+      state: present
+
+  - name: Verify Java Version
+    command: java -version
+    register: java_version
+    changed_when: false
+
+  - debug:
+      var: java_version.stderr
+
+  #########################################################
+  # Docker
+  #########################################################
+  - name: Install Docker
+    apt:
+      name: docker.io
+      state: present
+
+  - name: Enable Docker
+    service:
+      name: docker
+      enabled: yes
+      state: started
+
+  #########################################################
+  # Jenkins Repository
+  #########################################################
+  - name: Remove stale Jenkins key
+    file:
+      path: /usr/share/keyrings/jenkins-keyring.asc
+      state: absent
+
+  - name: Remove stale Jenkins repo file
+    file:
+      path: /etc/apt/sources.list.d/jenkins.list
+      state: absent
+
+  - name: Download Jenkins Key (2026)
+    get_url:
+      url: https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
+      dest: /usr/share/keyrings/jenkins-keyring.asc
+      mode: '0644'
+      force: true
+
+  - name: Add Jenkins Repository
+    apt_repository:
+      repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
+      filename: jenkins
+      state: present
+      update_cache: no
+    register: jenkins_repo
+
+  - name: Update apt cache after adding Jenkins repo
+    apt:
+      update_cache: yes
+    when: jenkins_repo.changed
+
+  - name: Install Jenkins
+    apt:
+      name: jenkins
+      state: present
+
+  - name: Start Jenkins
+    service:
+      name: jenkins
+      state: started
+      enabled: yes
+
+  #########################################################
+  # jenkins user -> docker group (so Jenkins jobs can use Docker)
+  #########################################################
+  - name: Add jenkins user to docker group
+    user:
+      name: jenkins
+      groups: docker
+      append: yes
+    notify: Restart Jenkins
+
+  #########################################################
+  # kubectl
+  #########################################################
+  - name: Download kubectl
+    get_url:
+      url: https://dl.k8s.io/release/v1.30.2/bin/linux/amd64/kubectl
+      dest: /usr/local/bin/kubectl
+      mode: '0755'
+

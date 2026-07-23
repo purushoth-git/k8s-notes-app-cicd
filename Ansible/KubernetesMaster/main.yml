@@ -1,0 +1,213 @@
+
+#SPDX-License-Identifier: MIT-0
+---
+# tasks file for kubernetes
+
+  - name: Update apt cache
+    apt:
+      update_cache: yes
+
+  - name: Install Java for Jenkins agent
+    apt:
+      name: openjdk-21-jdk
+      state: present
+
+  - name: Install base packages
+    apt:
+      name:
+        - curl
+        - apt-transport-https
+        - ca-certificates
+        - gpg
+      state: present
+
+  #############################################
+  # Disable swap (required by kubelet)
+  #############################################
+  - name: Disable swap
+    command: swapoff -a
+
+  - name: Remove swap entries from fstab
+    replace:
+      path: /etc/fstab
+      regexp: '^([^#].*\sswap\s.*)$'
+      replace: '# \1'
+
+  #############################################
+  # Kernel modules required by Kubernetes
+  #############################################
+  - name: Ensure required kernel modules load on boot
+    copy:
+      dest: /etc/modules-load.d/k8s.conf
+      content: |
+        overlay
+        br_netfilter
+
+  - name: Load overlay module
+    modprobe:
+      name: overlay
+      state: present
+
+  - name: Load br_netfilter module
+    modprobe:
+      name: br_netfilter
+      state: present
+
+  #############################################
+  # sysctl params required by Kubernetes
+  #############################################
+  - name: Set required sysctl params
+    copy:
+      dest: /etc/sysctl.d/k8s.conf
+      content: |
+        net.bridge.bridge-nf-call-iptables  = 1
+        net.bridge.bridge-nf-call-ip6tables = 1
+        net.ipv4.ip_forward                 = 1
+
+  - name: Apply sysctl params
+    command: sysctl --system
+
+  #############################################
+  # containerd (official recommended CRI runtime)
+  #############################################
+  - name: Install containerd
+    apt:
+      name: containerd
+      state: present
+
+  - name: Create containerd config directory
+    file:
+      path: /etc/containerd
+      state: directory
+
+  - name: Generate default containerd config
+    shell: containerd config default > /etc/containerd/config.toml
+    args:
+      creates: /etc/containerd/config.toml
+
+  - name: Enable SystemdCgroup in containerd config
+    replace:
+      path: /etc/containerd/config.toml
+      regexp: 'SystemdCgroup = false'
+      replace: 'SystemdCgroup = true'
+    notify: Restart containerd
+
+  - name: Ensure containerd is enabled and running
+    service:
+      name: containerd
+      state: started
+      enabled: yes
+
+  #############################################
+  # Kubernetes apt repository
+  #############################################
+  - name: Create keyrings directory
+    file:
+      path: /etc/apt/keyrings
+      state: directory
+      mode: '0755'
+
+  - name: Remove stale Kubernetes key
+    file:
+      path: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      state: absent
+
+  - name: Remove stale Kubernetes repo file
+    file:
+      path: /etc/apt/sources.list.d/kubernetes.list
+      state: absent
+
+  - name: Download Kubernetes signing key
+    shell: |
+      curl -fsSL https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/Release.key \
+      | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+  - name: Add Kubernetes repository
+    copy:
+      dest: /etc/apt/sources.list.d/kubernetes.list
+      content: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version }}/deb/ /\n"
+
+  - name: Update apt cache after adding Kubernetes repo
+    apt:
+      update_cache: yes
+
+  #############################################
+  # kubelet, kubeadm, kubectl
+  #############################################
+  - name: Install Kubernetes packages
+    apt:
+      name:
+        - kubelet
+        - kubeadm
+        - kubectl
+      state: present
+
+  - name: Hold Kubernetes packages at current version
+    dpkg_selections:
+      name: "{{ item }}"
+      selection: hold
+    loop:
+      - kubelet
+      - kubeadm
+      - kubectl
+
+  - name: Enable kubelet
+    service:
+      name: kubelet
+      enabled: yes
+
+  #############################################
+  # Initialize control plane (MASTER ONLY)
+  #############################################
+  - name: Check if cluster already initialized
+    stat:
+      path: /etc/kubernetes/admin.conf
+    register: k8s_admin_conf
+
+  - name: Run kubeadm init
+    command: >
+      kubeadm init
+      --pod-network-cidr={{ pod_network_cidr }}
+      --cri-socket=unix:///run/containerd/containerd.sock
+    when: not k8s_admin_conf.stat.exists
+
+  - name: Create .kube directory for ubuntu user
+    file:
+      path: /home/ubuntu/.kube
+      state: directory
+      owner: ubuntu
+      group: ubuntu
+      mode: '0755'
+
+  - name: Copy admin.conf to user's kube config
+    copy:
+      src: /etc/kubernetes/admin.conf
+      dest: /home/ubuntu/.kube/config
+      remote_src: yes
+      owner: ubuntu
+      group: ubuntu
+      mode: '0600'
+    when: not k8s_admin_conf.stat.exists
+
+  #############################################
+  # Install a Pod network add-on (Calico example)
+  #############################################
+  - name: Install Calico CNI
+    become_user: ubuntu
+    command: kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml
+    environment:
+      KUBECONFIG: /home/ubuntu/.kube/config
+    when: not k8s_admin_conf.stat.exists
+
+  #############################################
+  # Generate join command for worker nodes
+  #############################################
+  - name: Generate kubeadm join command
+    command: kubeadm token create --print-join-command
+    register: kubeadm_join_command
+
+  - name: Save join command to file
+    copy:
+      content: "{{ kubeadm_join_command.stdout }}"
+      dest: /tmp/kubeadm_join_command.sh
+      mode: '0755'
