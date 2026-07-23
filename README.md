@@ -53,7 +53,6 @@ Real infrastructure work rarely goes smoothly on the first try — a few of the 
 - **Jenkins wouldn't start** — `journalctl` showed Jenkins now requires Java 21 minimum; the box had Java 17 installed. Fixed by installing OpenJDK 21 and setting it as the default via `update-alternatives`.
 - **`kubeadm join` timing out** — the worker node couldn't reach the control plane's API server on port 6443. Root cause was a missing inbound security group rule between cluster nodes; fixed with a self-referencing security group rule allowing all traffic between nodes in the cluster.
 - **Jenkins SSH agent failing with exit code 127** — `java: command not found` on the target node; the Kubernetes master had no JDK installed before being added as a Jenkins agent.
-- **GitHub webhook returning HTTP 403** — Jenkins' default security config blocks anonymous requests, which is how GitHub's webhook calls in. Fixed by enabling anonymous read access under Jenkins' global security settings.
 
 ## Repository structure
 
