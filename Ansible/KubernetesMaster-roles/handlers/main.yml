@@ -1,0 +1,8 @@
+#SPDX-License-Identifier: MIT-0
+---
+# handlers file for kubernetes
+
+  - name: Restart containerd
+    service:
+      name: containerd
+      state: restarted
